@@ -4,7 +4,8 @@ import Modal from "./Modal";
 import { QUOTE_TYPES } from "../lib/constants";
 import {
   buildZaloQuoteMessage,
-  computeUnitPrice,
+  computeEffectiveOptionPrice,
+  computeEffectiveUnitPrice,
   formatVND,
   normalizeVietnamesePhone,
 } from "../lib/helpers";
@@ -12,6 +13,7 @@ import {
 export default function QuoteSummaryModal({
   items,
   customer,
+  note = "",
   productsMap,
   optionsMap,
   onClose,
@@ -26,16 +28,19 @@ export default function QuoteSummaryModal({
     .map((item) => {
       const product = productsMap.get(item.sku);
       if (!product) return null;
-      const unitPrice = computeUnitPrice(product, item.quoteType);
+      const unitPrice = computeEffectiveUnitPrice(item, product);
       const baseTotal = unitPrice * item.qty;
-      const optsTotal =
-        item.selectedOptions.reduce((sum, oid) => {
-          const o = optionsMap.get(oid);
-          return sum + (o && !o.is_free ? o.extra_price : 0);
-        }, 0) * item.qty;
       const selectedOpts = item.selectedOptions
-        .map((oid) => optionsMap.get(oid))
+        .map((oid) => {
+          const o = optionsMap.get(oid);
+          if (!o) return null;
+          // Decorate the option with its effective price so downstream renderers
+          // and the Zalo message helper can use the overridden value uniformly.
+          return { ...o, effectivePrice: computeEffectiveOptionPrice(item, o) };
+        })
         .filter(Boolean);
+      const optsTotal =
+        selectedOpts.reduce((sum, o) => sum + o.effectivePrice, 0) * item.qty;
       const typeLabel = QUOTE_TYPES.find((q) => q.value === item.quoteType)?.label || "Cả hai";
       return {
         product,
@@ -69,6 +74,7 @@ export default function QuoteSummaryModal({
       customer,
       lineItems,
       grandTotal,
+      note,
     });
 
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
@@ -115,7 +121,7 @@ export default function QuoteSummaryModal({
         text: "Không copy được: " + (e?.message || "lỗi không xác định"),
       });
     }
-  }, [quoteId, today, customer, lineItems, grandTotal]);
+  }, [quoteId, today, customer, lineItems, grandTotal, note]);
 
   return (
     <Modal
@@ -275,8 +281,8 @@ export default function QuoteSummaryModal({
                   {li.selectedOpts.map((o) => (
                     <li key={o.option_id} className="text-xs text-stone-700 italic">
                       + {o.option_name}
-                      {!o.is_free && (
-                        <span className="font-mono ml-1">({formatVND(o.extra_price)}đ)</span>
+                      {o.effectivePrice > 0 && (
+                        <span className="font-mono ml-1">({formatVND(o.effectivePrice)}đ)</span>
                       )}
                     </li>
                   ))}
@@ -334,8 +340,8 @@ export default function QuoteSummaryModal({
                         {li.selectedOpts.map((o) => (
                           <li key={o.option_id} className="text-xs text-stone-700 italic">
                             + {o.option_name}{" "}
-                            {!o.is_free && (
-                              <span className="font-mono">({formatVND(o.extra_price)}đ)</span>
+                            {o.effectivePrice > 0 && (
+                              <span className="font-mono">({formatVND(o.effectivePrice)}đ)</span>
                             )}
                           </li>
                         ))}
@@ -369,10 +375,16 @@ export default function QuoteSummaryModal({
           </table>
         </div>
 
-        <div className="mt-6 sm:mt-8 pt-5 sm:pt-6 border-t border-stone-300 text-xs text-stone-700 italic leading-relaxed">
-          <p>* Đơn vị tính: VNĐ. MD = mét dài (theo tường).</p>
-          <p>* Báo giá có giá trị trong 30 ngày. Vật tư có thể thay đổi theo thực tế công trình.</p>
-        </div>
+        {note && note.trim() && (
+          <div className="mt-6 sm:mt-8 pt-5 sm:pt-6 border-t border-stone-300">
+            <p className="text-[11px] uppercase tracking-widest text-stone-700 font-medium mb-2">
+              📝 Ghi chú
+            </p>
+            <p className="text-sm text-stone-900 whitespace-pre-wrap leading-relaxed">
+              {note.trim()}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Mobile sticky bottom action bar — thumb-zone ergonomics */}

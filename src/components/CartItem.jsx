@@ -1,10 +1,44 @@
-import { memo, useEffect, useId, useState } from "react";
-import { ChevronDown, Minus, Plus, Settings2, Trash2 } from "lucide-react";
+import { memo, useId, useState } from "react";
+import { ChevronDown, Minus, Plus, RotateCcw, Settings2, Trash2 } from "lucide-react";
 import { QUOTE_TYPES } from "../lib/constants";
-import { computeUnitPrice, formatVND } from "../lib/helpers";
+import {
+  computeEffectiveOptionPrice,
+  computeEffectiveUnitPrice,
+  computeUnitPrice,
+  formatVND,
+} from "../lib/helpers";
 
 const MIN_QTY = 0.1;
 const DEFAULT_QTY_ON_INVALID_BLUR = 1;
+
+// --- Local editable-number-with-string-buffer helpers --------------------
+// We keep a local string buffer for each editable price field so users can
+// clear or type intermediate values ("0", "0.5", "1.") without the parent
+// state immediately clamping them. Valid >= 0 numbers commit to parent;
+// invalid/empty blurs fall back to a sensible default.
+
+const makeStringHandlers = ({ setStr, defaultOnBlur, commit }) => {
+  const onChange = (e) => {
+    const v = e.target.value;
+    setStr(v);
+    const n = parseFloat(v);
+    if (!Number.isNaN(n) && n >= 0) {
+      commit(n);
+    }
+  };
+  const onBlur = () => {
+    setStr((current) => {
+      const n = parseFloat(current);
+      if (Number.isNaN(n) || n < 0) {
+        commit(defaultOnBlur);
+        return String(defaultOnBlur);
+      }
+      commit(n);
+      return String(n);
+    });
+  };
+  return { onChange, onBlur };
+};
 
 function CartItem({ item, product, productOptions, optionsMap, onChange, onRemove }) {
   const qtyId = useId();
@@ -12,19 +46,20 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
   const radiogroupId = useId();
   const radiogroupIdM = useId();
   const detailsId = useId();
+  const priceId = useId();
+  const priceIdM = useId();
   const [expanded, setExpanded] = useState(false);
 
-  // Local string state lets the user clear the input or type intermediate
-  // values like "0", "0." while composing "0.5" without the min clamp
-  // immediately overwriting their keystrokes. Parent only receives valid
-  // numbers >= MIN_QTY; invalid/empty blurs fall back to DEFAULT_QTY_ON_INVALID_BLUR.
+  // ----- Quantity string buffer (decimal-friendly) -----
+  // Adjust-state-during-render pattern: when the parent's item.qty changes,
+  // resync the local string buffer UNLESS it already represents the same number
+  // (preserves user typing like "1." while item.qty is 1).
   const [qtyStr, setQtyStr] = useState(() => String(item.qty));
-
-  useEffect(() => {
-    // Re-sync from parent only when our string is not already representing
-    // the same number (preserves "1." mid-typing when parent qty is 1).
-    setQtyStr((prev) => (parseFloat(prev) === item.qty ? prev : String(item.qty)));
-  }, [item.qty]);
+  const [prevItemQty, setPrevItemQty] = useState(item.qty);
+  if (item.qty !== prevItemQty) {
+    setPrevItemQty(item.qty);
+    if (parseFloat(qtyStr) !== item.qty) setQtyStr(String(item.qty));
+  }
 
   const handleQtyChange = (e) => {
     const v = e.target.value;
@@ -41,30 +76,63 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
       setQtyStr(String(DEFAULT_QTY_ON_INVALID_BLUR));
       onChange(item.id, { qty: DEFAULT_QTY_ON_INVALID_BLUR });
     } else {
-      // Normalize display (e.g., "01" → "1", "1.50" → "1.5")
       setQtyStr(String(n));
     }
   };
 
-  const hasManufacture = product.price_manufacture > 0;
-  const unitPrice = computeUnitPrice(product, item.quoteType);
-  const baseTotal = unitPrice * item.qty;
+  // ----- Effective prices and override state -----
+  const catalogUnitPrice = computeUnitPrice(product, item.quoteType);
+  const effectiveUnitPrice = computeEffectiveUnitPrice(item, product);
+  const unitPriceOverridden =
+    item.unitPriceOverride != null && item.unitPriceOverride !== catalogUnitPrice;
+
+  // ----- Unit price string buffer (adjust-during-render sync) -----
+  const [unitPriceStr, setUnitPriceStr] = useState(() => String(effectiveUnitPrice));
+  const [prevEffectiveUnit, setPrevEffectiveUnit] = useState(effectiveUnitPrice);
+  if (effectiveUnitPrice !== prevEffectiveUnit) {
+    setPrevEffectiveUnit(effectiveUnitPrice);
+    if (parseFloat(unitPriceStr) !== effectiveUnitPrice) {
+      setUnitPriceStr(String(effectiveUnitPrice));
+    }
+  }
+
+  const unitPriceHandlers = makeStringHandlers({
+    setStr: setUnitPriceStr,
+    defaultOnBlur: catalogUnitPrice,
+    commit: (n) => onChange(item.id, { unitPriceOverride: n }),
+  });
+
+  const handleUnitPriceReset = () => {
+    setUnitPriceStr(String(catalogUnitPrice));
+    onChange(item.id, { unitPriceOverride: null });
+  };
+
+  // ----- Subtotal calc -----
+  const baseTotal = effectiveUnitPrice * item.qty;
   const optionsTotal =
     item.selectedOptions.reduce((sum, optId) => {
       const opt = optionsMap.get(optId);
-      return sum + (opt && !opt.is_free ? opt.extra_price : 0);
+      return sum + computeEffectiveOptionPrice(item, opt);
     }, 0) * item.qty;
   const subtotal = baseTotal + optionsTotal;
 
   const activeQt = QUOTE_TYPES.find((q) => q.value === item.quoteType) || QUOTE_TYPES[0];
   const selectedOptCount = item.selectedOptions.length;
+  const hasManufacture = product.price_manufacture > 0;
   const hasOptions = productOptions.length > 0;
   const showExpand = hasManufacture || hasOptions;
 
+  // ----- Option price commit helper -----
+  const setOptionPriceOverride = (optionId, value) => {
+    const next = { ...(item.optionPriceOverrides || {}) };
+    if (value == null) delete next[optionId];
+    else next[optionId] = value;
+    onChange(item.id, { optionPriceOverrides: next });
+  };
+
   return (
     <article aria-label={`Hạng mục: ${product.name}`} className="border-b border-stone-200/60">
-      {/* MOBILE compact branch — < sm (640px). Entire row 1+2 acts as a single
-          expand/collapse trigger; inner buttons/inputs preserve their own actions. */}
+      {/* MOBILE compact branch — < sm (640px) */}
       <div className="sm:hidden">
         <div
           {...(showExpand
@@ -95,7 +163,7 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
               : ""
           }`}
         >
-          {/* Row 1 — trash · name · subtotal · chevron-icon */}
+          {/* Row 1 — trash · name · subtotal · chevron */}
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -124,72 +192,104 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
             )}
           </div>
 
-          {/* Row 2 — qty stepper · unit · quote-type chip · options badge */}
+          {/* Row 2 — qty stepper · unit · EDITABLE UNIT PRICE · quote-type · options badge */}
           <div className="mt-1.5 ml-9 flex items-center gap-2 flex-wrap">
-          <label htmlFor={qtyIdM} className="sr-only">
-            Số lượng {product.name} đơn vị {product.unit}
-          </label>
-          <div className="inline-flex items-center bg-stone-50 border border-stone-300 h-9">
-            <button
-              type="button"
-              onClick={() =>
-                onChange(item.id, { qty: Math.max(0.1, parseFloat((item.qty - 1).toFixed(2))) })
-              }
-              aria-label="Giảm số lượng"
-              className="inline-flex items-center justify-center w-9 h-9 hover:bg-stone-100 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-inset"
-            >
-              <Minus aria-hidden="true" className="w-3.5 h-3.5" />
-            </button>
+            <label htmlFor={qtyIdM} className="sr-only">
+              Số lượng {product.name} đơn vị {product.unit}
+            </label>
+            <div className="inline-flex items-center bg-stone-50 border border-stone-300 h-9">
+              <button
+                type="button"
+                onClick={() =>
+                  onChange(item.id, { qty: Math.max(0.1, parseFloat((item.qty - 1).toFixed(2))) })
+                }
+                aria-label="Giảm số lượng"
+                className="inline-flex items-center justify-center w-9 h-9 hover:bg-stone-100 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-inset"
+              >
+                <Minus aria-hidden="true" className="w-3.5 h-3.5" />
+              </button>
+              <input
+                id={qtyIdM}
+                type="number"
+                inputMode="decimal"
+                value={qtyStr}
+                min="0.1"
+                max="9999"
+                step="0.1"
+                onChange={handleQtyChange}
+                onBlur={handleQtyBlur}
+                className="w-12 h-9 text-center text-sm font-mono bg-transparent border-x border-stone-300 focus:outline-none focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800"
+              />
+              <button
+                type="button"
+                onClick={() => onChange(item.id, { qty: parseFloat((item.qty + 1).toFixed(2)) })}
+                aria-label="Tăng số lượng"
+                className="inline-flex items-center justify-center w-9 h-9 hover:bg-stone-100 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-inset"
+              >
+                <Plus aria-hidden="true" className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Editable unit price (mobile) */}
+            <span className="text-[11px] text-stone-600 font-mono">{product.unit} ·</span>
+            <label htmlFor={priceIdM} className="sr-only">
+              Đơn giá {product.name}
+            </label>
             <input
-              id={qtyIdM}
+              id={priceIdM}
               type="number"
               inputMode="decimal"
-              value={qtyStr}
-              min="0.1"
-              max="9999"
-              step="0.1"
-              onChange={handleQtyChange}
-              onBlur={handleQtyBlur}
-              className="w-12 h-9 text-center text-sm font-mono bg-transparent border-x border-stone-300 focus:outline-none focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800"
+              value={unitPriceStr}
+              min="0"
+              step="1000"
+              onChange={unitPriceHandlers.onChange}
+              onBlur={unitPriceHandlers.onBlur}
+              aria-label={`Đơn giá ${product.name}`}
+              className={`w-24 h-9 text-right text-[12px] font-mono px-1.5 bg-white border focus:outline-none focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800 ${
+                unitPriceOverridden
+                  ? "border-amber-700/70 text-amber-900"
+                  : "border-stone-300 text-stone-700"
+              }`}
             />
+            {unitPriceOverridden && (
+              <button
+                type="button"
+                onClick={handleUnitPriceReset}
+                aria-label="Khôi phục giá niêm yết"
+                title="Khôi phục giá niêm yết"
+                className="inline-flex items-center justify-center w-7 h-7 text-stone-500 hover:text-amber-900 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-1"
+              >
+                <RotateCcw aria-hidden="true" className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {/* Quote-type chip — opens details */}
             <button
               type="button"
-              onClick={() => onChange(item.id, { qty: parseFloat((item.qty + 1).toFixed(2)) })}
-              aria-label="Tăng số lượng"
-              className="inline-flex items-center justify-center w-9 h-9 hover:bg-stone-100 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-inset"
+              onClick={() => setExpanded(true)}
+              aria-label={`Loại báo giá: ${activeQt.label}. Mở chi tiết để thay đổi.`}
+              className="ml-auto inline-flex items-center gap-1 h-7 px-2 text-[10px] tracking-wider uppercase border border-stone-300 bg-white text-stone-700 hover:border-amber-800 hover:text-amber-900 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-1"
             >
-              <Plus aria-hidden="true" className="w-3.5 h-3.5" />
+              <Settings2 aria-hidden="true" className="w-3 h-3" />
+              {activeQt.short}
             </button>
-          </div>
-          <span className="text-[11px] text-stone-600 font-mono">
-            {product.unit} · {formatVND(unitPrice)}
-          </span>
-
-          {/* Quote-type override chip — opens details, focuses radiogroup */}
-          <button
-            type="button"
-            onClick={() => setExpanded(true)}
-            aria-label={`Loại báo giá: ${activeQt.label}. Mở chi tiết để thay đổi.`}
-            className="ml-auto inline-flex items-center gap-1 h-7 px-2 text-[10px] tracking-wider uppercase border border-stone-300 bg-white text-stone-700 hover:border-amber-800 hover:text-amber-900 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-1"
-          >
-            <Settings2 aria-hidden="true" className="w-3 h-3" />
-            {activeQt.short}
-          </button>
-          {hasOptions && (
-            <span
-              className={`inline-flex items-center h-7 px-2 text-[10px] tracking-wider uppercase border font-mono ${
-                selectedOptCount > 0
-                  ? "border-amber-700/50 bg-amber-50 text-amber-900"
-                  : "border-stone-300 bg-white text-stone-600"
-              }`}
-            >
-              {selectedOptCount > 0 ? `+${selectedOptCount} tùy chọn` : `Tùy chọn (${productOptions.length})`}
-            </span>
-          )}
+            {hasOptions && (
+              <span
+                className={`inline-flex items-center h-7 px-2 text-[10px] tracking-wider uppercase border font-mono ${
+                  selectedOptCount > 0
+                    ? "border-amber-700/50 bg-amber-50 text-amber-900"
+                    : "border-stone-300 bg-white text-stone-600"
+                }`}
+              >
+                {selectedOptCount > 0
+                  ? `+${selectedOptCount} tùy chọn`
+                  : `Tùy chọn (${productOptions.length})`}
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Row 3 — collapsed details: quote-type radiogroup + options checkboxes */}
+        {/* Row 3 — expanded details (mobile) */}
         {expanded && (
           <div
             id={detailsId}
@@ -243,44 +343,28 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
                 <legend className="text-[10px] tracking-wider uppercase text-stone-600 font-medium mb-1">
                   Tùy chọn
                 </legend>
-                {productOptions.map((opt) => {
-                  const checked = item.selectedOptions.includes(opt.option_id);
-                  return (
-                    <label
-                      key={opt.option_id}
-                      className="flex items-center gap-2 text-xs cursor-pointer select-none py-1.5 min-h-[36px]"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => {
-                          const newOpts = checked
-                            ? item.selectedOptions.filter((o) => o !== opt.option_id)
-                            : [...item.selectedOptions, opt.option_id];
-                          onChange(item.id, { selectedOptions: newOpts });
-                        }}
-                        className="w-4 h-4 accent-amber-900 cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-800"
-                      />
-                      <span
-                        className={`flex-1 ${
-                          checked ? "text-stone-900" : "text-stone-600"
-                        }`}
-                      >
-                        {opt.option_name}
-                      </span>
-                      <span className="font-mono text-amber-900">
-                        {opt.is_free ? "Miễn phí" : `+${formatVND(opt.extra_price)}`}
-                      </span>
-                    </label>
-                  );
-                })}
+                {productOptions.map((opt) => (
+                  <OptionRow
+                    key={opt.option_id}
+                    opt={opt}
+                    item={item}
+                    onToggle={() => {
+                      const checked = item.selectedOptions.includes(opt.option_id);
+                      const newOpts = checked
+                        ? item.selectedOptions.filter((o) => o !== opt.option_id)
+                        : [...item.selectedOptions, opt.option_id];
+                      onChange(item.id, { selectedOptions: newOpts });
+                    }}
+                    onPriceChange={(value) => setOptionPriceOverride(opt.option_id, value)}
+                  />
+                ))}
               </fieldset>
             )}
           </div>
         )}
       </div>
 
-      {/* DESKTOP branch — sm and up — UNCHANGED from current implementation */}
+      {/* DESKTOP branch — sm and up */}
       <div className="hidden sm:block py-4">
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="flex-1 min-w-0">
@@ -342,7 +426,7 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
           </div>
         </div>
 
-        <div className="flex items-center gap-3 mb-2">
+        <div className="flex items-center gap-3 mb-2 flex-wrap">
           <label htmlFor={qtyId} className="sr-only">
             Số lượng {product.name} đơn vị {product.unit}
           </label>
@@ -380,39 +464,62 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
           </div>
           <span className="text-xs text-stone-600">{product.unit}</span>
           <span aria-hidden="true" className="text-xs text-stone-500">×</span>
-          <span className="text-xs text-stone-600 font-mono">{formatVND(unitPrice)}</span>
+
+          {/* Editable unit price (desktop) */}
+          <label htmlFor={priceId} className="sr-only">
+            Đơn giá {product.name}
+          </label>
+          <div className="inline-flex items-center gap-1">
+            <input
+              id={priceId}
+              type="number"
+              inputMode="decimal"
+              value={unitPriceStr}
+              min="0"
+              step="1000"
+              onChange={unitPriceHandlers.onChange}
+              onBlur={unitPriceHandlers.onBlur}
+              aria-label={`Đơn giá ${product.name}`}
+              className={`w-32 h-10 text-right text-xs font-mono px-2 bg-white border focus:outline-none focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800 ${
+                unitPriceOverridden
+                  ? "border-amber-700/70 text-amber-900"
+                  : "border-stone-300 text-stone-700"
+              }`}
+            />
+            <span className="text-xs text-stone-500">đ</span>
+            {unitPriceOverridden && (
+              <button
+                type="button"
+                onClick={handleUnitPriceReset}
+                aria-label="Khôi phục giá niêm yết"
+                title="Khôi phục giá niêm yết"
+                className="inline-flex items-center justify-center w-8 h-8 text-stone-500 hover:text-amber-900 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-1"
+              >
+                <RotateCcw aria-hidden="true" className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
 
         {productOptions.length > 0 && (
           <fieldset className="mt-2 space-y-1 pl-1">
             <legend className="sr-only">Tùy chọn cho {product.name}</legend>
-            {productOptions.map((opt) => {
-              const checked = item.selectedOptions.includes(opt.option_id);
-              return (
-                <label
-                  key={opt.option_id}
-                  className="flex items-center gap-2 text-xs cursor-pointer select-none py-1"
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => {
-                      const newOpts = checked
-                        ? item.selectedOptions.filter((o) => o !== opt.option_id)
-                        : [...item.selectedOptions, opt.option_id];
-                      onChange(item.id, { selectedOptions: newOpts });
-                    }}
-                    className="w-4 h-4 accent-amber-900 cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-800"
-                  />
-                  <span className={`flex-1 ${checked ? "text-stone-900" : "text-stone-600"}`}>
-                    {opt.option_name}
-                  </span>
-                  <span className="font-mono text-amber-900">
-                    {opt.is_free ? "Miễn phí" : `+${formatVND(opt.extra_price)}`}
-                  </span>
-                </label>
-              );
-            })}
+            {productOptions.map((opt) => (
+              <OptionRow
+                key={opt.option_id}
+                opt={opt}
+                item={item}
+                desktop
+                onToggle={() => {
+                  const checked = item.selectedOptions.includes(opt.option_id);
+                  const newOpts = checked
+                    ? item.selectedOptions.filter((o) => o !== opt.option_id)
+                    : [...item.selectedOptions, opt.option_id];
+                  onChange(item.id, { selectedOptions: newOpts });
+                }}
+                onPriceChange={(value) => setOptionPriceOverride(opt.option_id, value)}
+              />
+            ))}
           </fieldset>
         )}
 
@@ -423,6 +530,102 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
         </div>
       </div>
     </article>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Option row — checkbox + editable extra-price (when checked and not free)
+//
+// Layout note: the checkbox + name are wrapped in a `<label>` so the label
+// can implicitly toggle the checkbox when clicked. The price input and reset
+// button sit OUTSIDE the label as siblings so clicking inside them doesn't
+// accidentally toggle the option's selected state.
+// ---------------------------------------------------------------------------
+function OptionRow({ opt, item, desktop = false, onToggle, onPriceChange }) {
+  const checked = item.selectedOptions.includes(opt.option_id);
+  const catalogExtra = opt.is_free ? 0 : opt.extra_price;
+  const effectivePrice = computeEffectiveOptionPrice(item, opt);
+  const overridden =
+    item.optionPriceOverrides?.[opt.option_id] != null &&
+    item.optionPriceOverrides[opt.option_id] !== catalogExtra;
+
+  // Adjust-during-render sync between effectivePrice prop and local string buffer.
+  const [priceStr, setPriceStr] = useState(() => String(effectivePrice));
+  const [prevEffective, setPrevEffective] = useState(effectivePrice);
+  if (effectivePrice !== prevEffective) {
+    setPrevEffective(effectivePrice);
+    if (parseFloat(priceStr) !== effectivePrice) setPriceStr(String(effectivePrice));
+  }
+
+  const handlers = makeStringHandlers({
+    setStr: setPriceStr,
+    defaultOnBlur: catalogExtra,
+    commit: (n) => onPriceChange(n),
+  });
+
+  const handleReset = () => {
+    setPriceStr(String(catalogExtra));
+    onPriceChange(null);
+  };
+
+  const showPriceInput = checked && (!opt.is_free || overridden);
+
+  return (
+    <div
+      className={`flex items-center gap-2 text-xs select-none ${
+        desktop ? "py-1" : "py-1.5 min-h-[36px]"
+      }`}
+    >
+      <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={onToggle}
+          className="w-4 h-4 accent-amber-900 cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-800"
+        />
+        <span className={`flex-1 truncate ${checked ? "text-stone-900" : "text-stone-600"}`}>
+          {opt.option_name}
+        </span>
+      </label>
+
+      {opt.is_free && !overridden && (
+        <span className="font-mono text-amber-900">Miễn phí</span>
+      )}
+
+      {!showPriceInput && !opt.is_free && !checked && (
+        <span className="font-mono text-stone-500">+{formatVND(catalogExtra)}</span>
+      )}
+
+      {showPriceInput && (
+        <span className="inline-flex items-center gap-1 shrink-0">
+          <span className="text-amber-900 font-mono">+</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={priceStr}
+            min="0"
+            step="1000"
+            onChange={handlers.onChange}
+            onBlur={handlers.onBlur}
+            aria-label={`Giá phụ thu cho ${opt.option_name}`}
+            className={`w-24 h-7 text-right font-mono px-1.5 bg-white border focus:outline-none focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800 ${
+              overridden ? "border-amber-700/70 text-amber-900" : "border-stone-300 text-stone-700"
+            }`}
+          />
+          {overridden && (
+            <button
+              type="button"
+              onClick={handleReset}
+              aria-label={`Khôi phục giá gốc cho ${opt.option_name}`}
+              title="Khôi phục giá gốc"
+              className="inline-flex items-center justify-center w-6 h-6 text-stone-500 hover:text-amber-900 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-1"
+            >
+              <RotateCcw aria-hidden="true" className="w-3 h-3" />
+            </button>
+          )}
+        </span>
+      )}
+    </div>
   );
 }
 
