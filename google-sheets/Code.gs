@@ -68,15 +68,19 @@ function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
     const action = body.action;
-    
+
     if (action === 'saveQuote') {
       return saveQuote(body.quote);
     }
-    
+
     if (action === 'updateQuoteStatus') {
       return updateQuoteStatus(body.quote_id, body.status);
     }
-    
+
+    if (action === 'updateProductAndOptions') {
+      return updateProductAndOptions(body.product, body.options || []);
+    }
+
     return jsonResponse({ ok: false, error: 'Unknown action: ' + action });
   } catch (err) {
     return jsonResponse({ ok: false, error: err.toString() });
@@ -137,6 +141,69 @@ function saveQuote(quote) {
     ok: true,
     quote_id: quoteId,
     saved_at: now.toISOString()
+  });
+}
+
+// ============================================================
+// UPDATE PRODUCT + OPTIONS (atomic-ish — best effort)
+// ============================================================
+// Payload shape:
+//   product: { sku, name, price_install, price_manufacture }
+//   options: [ { option_id, sku, option_name, extra_price, is_free } ]
+// Only updates existing rows (matched by sku for product, option_id for options).
+// Returns counts of updates applied.
+function updateProductAndOptions(product, options) {
+  if (!product || !product.sku) {
+    return jsonResponse({ ok: false, error: 'Missing product or sku' });
+  }
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let productUpdated = false;
+  const optionsUpdated = [];
+
+  // Update products sheet — columns: sku, name, category, unit,
+  // price_install, price_manufacture, description, image_url, status
+  const productsSheet = ss.getSheetByName('products');
+  if (productsSheet) {
+    const data = productsSheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === product.sku) {
+        const row = i + 1;
+        if (product.name != null) productsSheet.getRange(row, 2).setValue(product.name);
+        if (product.price_install != null)
+          productsSheet.getRange(row, 5).setValue(Number(product.price_install) || 0);
+        if (product.price_manufacture != null)
+          productsSheet.getRange(row, 6).setValue(Number(product.price_manufacture) || 0);
+        productUpdated = true;
+        break;
+      }
+    }
+  }
+
+  // Update product_options sheet — columns: option_id, sku, option_name,
+  // extra_price, is_free
+  const optionsSheet = ss.getSheetByName('product_options');
+  if (optionsSheet && options.length > 0) {
+    const data = optionsSheet.getDataRange().getValues();
+    const idIndex = new Map();
+    for (let i = 1; i < data.length; i++) idIndex.set(data[i][0], i + 1);
+
+    options.forEach(function (opt) {
+      if (!opt || !opt.option_id) return;
+      const row = idIndex.get(opt.option_id);
+      if (!row) return;
+      if (opt.option_name != null) optionsSheet.getRange(row, 3).setValue(opt.option_name);
+      if (opt.extra_price != null)
+        optionsSheet.getRange(row, 4).setValue(Number(opt.extra_price) || 0);
+      if (opt.is_free != null)
+        optionsSheet.getRange(row, 5).setValue(opt.is_free ? 'TRUE' : 'FALSE');
+      optionsUpdated.push(opt.option_id);
+    });
+  }
+
+  return jsonResponse({
+    ok: true,
+    product_updated: productUpdated,
+    options_updated: optionsUpdated
   });
 }
 
