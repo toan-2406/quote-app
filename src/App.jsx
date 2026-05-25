@@ -29,9 +29,12 @@ import { useDebounce } from "./hooks/useDebounce";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 
 import {
+  CART_STORAGE_KEY,
+  CUSTOMER_STORAGE_KEY,
   DEFAULT_SCRIPT_URL,
   MOBILE_BREAKPOINT_QUERY,
   QUOTE_TYPES,
+  QUOTE_TYPE_STORAGE_KEY,
   STORAGE_KEY,
 } from "./lib/constants";
 import {
@@ -73,6 +76,11 @@ export default function QuoteApp() {
   const toastTimerRef = useRef(null);
   const [cartBumpKey, setCartBumpKey] = useState(0);
 
+  // Tracks whether cart/customer/defaultQuoteType have been loaded from storage.
+  // Persistence effects below skip writes until hydration completes so the
+  // initial empty defaults don't overwrite the user's saved data on first render.
+  const [hydrated, setHydrated] = useState(false);
+
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT_QUERY);
   const abortRef = useRef(null);
 
@@ -89,6 +97,63 @@ export default function QuoteApp() {
   useEffect(() => () => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
+
+  // Hydrate cart, customer, defaultQuoteType from localStorage on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [cartStored, customerStored, typeStored] = await Promise.all([
+          storage.get(CART_STORAGE_KEY),
+          storage.get(CUSTOMER_STORAGE_KEY),
+          storage.get(QUOTE_TYPE_STORAGE_KEY),
+        ]);
+        if (cancelled) return;
+        if (cartStored?.value) {
+          const parsed = JSON.parse(cartStored.value);
+          if (Array.isArray(parsed)) setCart(parsed);
+        }
+        if (customerStored?.value) {
+          const parsed = JSON.parse(customerStored.value);
+          if (parsed && typeof parsed === "object") {
+            setCustomer({
+              name: parsed.name || "",
+              phone: parsed.phone || "",
+              address: parsed.address || "",
+            });
+          }
+        }
+        if (typeStored?.value) {
+          const allowed = QUOTE_TYPES.map((q) => q.value);
+          if (allowed.includes(typeStored.value)) setDefaultQuoteType(typeStored.value);
+        }
+      } catch {
+        // Storage unavailable or corrupted — fall back to defaults.
+      }
+      if (!cancelled) setHydrated(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist cart on change (post-hydration).
+  useEffect(() => {
+    if (!hydrated) return;
+    storage.set(CART_STORAGE_KEY, JSON.stringify(cart));
+  }, [cart, hydrated]);
+
+  // Persist customer info on change (post-hydration).
+  useEffect(() => {
+    if (!hydrated) return;
+    storage.set(CUSTOMER_STORAGE_KEY, JSON.stringify(customer));
+  }, [customer, hydrated]);
+
+  // Persist default quote type on change (post-hydration).
+  useEffect(() => {
+    if (!hydrated) return;
+    storage.set(QUOTE_TYPE_STORAGE_KEY, defaultQuoteType);
+  }, [defaultQuoteType, hydrated]);
 
   const fetchSheetData = useCallback(async (url) => {
     if (!url) {
