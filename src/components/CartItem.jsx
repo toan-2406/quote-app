@@ -1,7 +1,10 @@
-import { memo, useId, useState } from "react";
+import { memo, useEffect, useId, useState } from "react";
 import { ChevronDown, Minus, Plus, Settings2, Trash2 } from "lucide-react";
 import { QUOTE_TYPES } from "../lib/constants";
 import { computeUnitPrice, formatVND } from "../lib/helpers";
+
+const MIN_QTY = 0.1;
+const DEFAULT_QTY_ON_INVALID_BLUR = 1;
 
 function CartItem({ item, product, productOptions, optionsMap, onChange, onRemove }) {
   const qtyId = useId();
@@ -10,6 +13,38 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
   const radiogroupIdM = useId();
   const detailsId = useId();
   const [expanded, setExpanded] = useState(false);
+
+  // Local string state lets the user clear the input or type intermediate
+  // values like "0", "0." while composing "0.5" without the min clamp
+  // immediately overwriting their keystrokes. Parent only receives valid
+  // numbers >= MIN_QTY; invalid/empty blurs fall back to DEFAULT_QTY_ON_INVALID_BLUR.
+  const [qtyStr, setQtyStr] = useState(() => String(item.qty));
+
+  useEffect(() => {
+    // Re-sync from parent only when our string is not already representing
+    // the same number (preserves "1." mid-typing when parent qty is 1).
+    setQtyStr((prev) => (parseFloat(prev) === item.qty ? prev : String(item.qty)));
+  }, [item.qty]);
+
+  const handleQtyChange = (e) => {
+    const v = e.target.value;
+    setQtyStr(v);
+    const n = parseFloat(v);
+    if (!Number.isNaN(n) && n >= MIN_QTY) {
+      onChange(item.id, { qty: n });
+    }
+  };
+
+  const handleQtyBlur = () => {
+    const n = parseFloat(qtyStr);
+    if (Number.isNaN(n) || n < MIN_QTY) {
+      setQtyStr(String(DEFAULT_QTY_ON_INVALID_BLUR));
+      onChange(item.id, { qty: DEFAULT_QTY_ON_INVALID_BLUR });
+    } else {
+      // Normalize display (e.g., "01" → "1", "1.50" → "1.5")
+      setQtyStr(String(n));
+    }
+  };
 
   const hasManufacture = product.price_manufacture > 0;
   const unitPrice = computeUnitPrice(product, item.quoteType);
@@ -109,15 +144,12 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
               id={qtyIdM}
               type="number"
               inputMode="decimal"
-              value={item.qty}
+              value={qtyStr}
               min="0.1"
               max="9999"
               step="0.1"
-              onChange={(e) =>
-                onChange(item.id, {
-                  qty: Math.max(0.1, parseFloat(e.target.value) || 0.1),
-                })
-              }
+              onChange={handleQtyChange}
+              onBlur={handleQtyBlur}
               className="w-12 h-9 text-center text-sm font-mono bg-transparent border-x border-stone-300 focus:outline-none focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800"
             />
             <button
@@ -329,15 +361,12 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
               id={qtyId}
               type="number"
               inputMode="decimal"
-              value={item.qty}
+              value={qtyStr}
               min="0.1"
               max="9999"
               step="0.1"
-              onChange={(e) =>
-                onChange(item.id, {
-                  qty: Math.max(0.1, parseFloat(e.target.value) || 0.1),
-                })
-              }
+              onChange={handleQtyChange}
+              onBlur={handleQtyBlur}
               className="w-16 text-center text-sm font-mono bg-transparent border-x border-stone-300 py-2 min-h-[44px] focus:outline-none focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800"
             />
             <button
