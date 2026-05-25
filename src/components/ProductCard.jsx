@@ -2,12 +2,39 @@ import { memo, useState } from "react";
 import { ChevronDown, Plus, Sparkles } from "lucide-react";
 import { formatVND } from "../lib/helpers";
 
-function ProductCard({ product, optionsCount, onAdd }) {
+function ProductCard({ product, optionsCount, onAdd, onOpenDetail }) {
   const [open, setOpen] = useState(false);
   const total = product.price_install + product.price_manufacture;
   const hasBreakdown = product.price_manufacture > 0;
   const titleId = `prod-${product.sku}`;
   const detailsId = `prod-${product.sku}-details`;
+
+  // Open detail unless the click landed on a real button/input.
+  const handleCardClick = (e) => {
+    if (!onOpenDetail) return;
+    if (e.target.closest("button, input, label, a")) return;
+    onOpenDetail(product);
+  };
+  const handleCardKey = (e) => {
+    if (!onOpenDetail) return;
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onOpenDetail(product);
+    }
+  };
+
+  const cardInteractiveProps = onOpenDetail
+    ? {
+        role: "button",
+        tabIndex: 0,
+        onClick: handleCardClick,
+        onKeyDown: handleCardKey,
+        "aria-label": `Xem chi tiết ${product.name}`,
+        className:
+          "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-inset",
+      }
+    : {};
 
   return (
     <article
@@ -15,7 +42,7 @@ function ProductCard({ product, optionsCount, onAdd }) {
       className="group relative bg-white border border-stone-200/80 hover:border-amber-800/30 focus-within:border-amber-800/50 transition-colors"
     >
       {/* ====================== MOBILE LAYOUT (<sm): horizontal row ====================== */}
-      <div className="sm:hidden flex items-stretch gap-2 p-3">
+      <div {...cardInteractiveProps} className={`sm:hidden flex items-stretch gap-2 p-3 ${cardInteractiveProps.className || ""}`}>
         <div className="flex flex-col justify-center border-r border-stone-200 pr-2 min-w-[56px] max-w-[56px]">
           <p className="text-[9px] tracking-[0.12em] uppercase text-amber-900 font-medium leading-tight line-clamp-2">
             {product.category}
@@ -102,7 +129,10 @@ function ProductCard({ product, optionsCount, onAdd }) {
       )}
 
       {/* ====================== DESKTOP LAYOUT (sm+): original card ====================== */}
-      <div className="hidden sm:flex p-5 flex-col justify-between hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-shadow">
+      <div
+        {...cardInteractiveProps}
+        className={`hidden sm:flex p-5 flex-col justify-between hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-shadow ${cardInteractiveProps.className || ""}`}
+      >
         <div>
           <div className="flex items-start justify-between mb-3 gap-3">
             <div className="flex-1 min-w-0">

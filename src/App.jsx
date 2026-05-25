@@ -20,6 +20,7 @@ import {
 
 import ConnectionBadge from "./components/ConnectionBadge";
 import ProductCard from "./components/ProductCard";
+import ProductDetailModal from "./components/ProductDetailModal";
 import CartItem from "./components/CartItem";
 import SettingsModal from "./components/SettingsModal";
 import QuoteSummaryModal from "./components/QuoteSummaryModal";
@@ -69,6 +70,7 @@ export default function QuoteApp() {
   const [showSummary, setShowSummary] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSavedQuotes, setShowSavedQuotes] = useState(false);
+  const [detailProduct, setDetailProduct] = useState(null);
   const [mobileTab, setMobileTab] = useState("catalog");
   const [defaultQuoteType, setDefaultQuoteType] = useState("both");
   const [savedQuoteInfo, setSavedQuoteInfo] = useState(null);
@@ -349,6 +351,28 @@ export default function QuoteApp() {
     setToast(null);
   }, []);
 
+  // Persist product + options edits back to the Sheet, then refresh local
+  // products/options from source so subsequent renders pick up the new values.
+  const handleUpdateProductAndOptions = useCallback(
+    async ({ product, options }) => {
+      if (!scriptUrl) throw new Error("Chưa kết nối với Google Sheet.");
+      const res = await fetch(scriptUrl, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "updateProductAndOptions",
+          product,
+          options,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Cập nhật thất bại.");
+      // Refetch in background so the catalog reflects new values.
+      fetchSheetData(scriptUrl);
+      return data;
+    },
+    [scriptUrl, fetchSheetData],
+  );
+
   return (
     <div className="min-h-screen pb-12 bg-[#FAF7F2]">
       <a
@@ -605,6 +629,7 @@ export default function QuoteApp() {
                   product={p}
                   optionsCount={(optionsBySku.get(p.sku) || []).length}
                   onAdd={addToCart}
+                  onOpenDetail={setDetailProduct}
                 />
               ))}
             </div>
@@ -987,6 +1012,23 @@ export default function QuoteApp() {
           </button>
         </div>
       )}
+
+      {detailProduct && (() => {
+        // Look up the live product from productsMap so the modal reflects
+        // the latest values after a save+refetch. If the SKU was removed
+        // upstream, fall back to the snapshot so the modal can still close.
+        const liveProduct = productsMap.get(detailProduct.sku) || detailProduct;
+        return (
+          <ProductDetailModal
+            product={liveProduct}
+            productOptions={optionsBySku.get(liveProduct.sku) || []}
+            canEdit={connectionStatus === "connected"}
+            onClose={() => setDetailProduct(null)}
+            onAddToCart={addToCart}
+            onSave={handleUpdateProductAndOptions}
+          />
+        );
+      })()}
 
       {showSummary && (
         <QuoteSummaryModal
