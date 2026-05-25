@@ -98,7 +98,7 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
             <button
               type="button"
               onClick={() =>
-                onChange(item.id, { qty: Math.max(1, Math.round(item.qty - 1)) })
+                onChange(item.id, { qty: Math.max(0.1, parseFloat((item.qty - 1).toFixed(2))) })
               }
               aria-label="Giảm số lượng"
               className="inline-flex items-center justify-center w-9 h-9 hover:bg-stone-100 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-inset"
@@ -108,21 +108,21 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
             <input
               id={qtyIdM}
               type="number"
-              inputMode="numeric"
+              inputMode="decimal"
               value={item.qty}
-              min="1"
+              min="0.1"
               max="9999"
-              step="1"
+              step="0.1"
               onChange={(e) =>
                 onChange(item.id, {
-                  qty: Math.max(1, parseInt(e.target.value, 10) || 1),
+                  qty: Math.max(0.1, parseFloat(e.target.value) || 0.1),
                 })
               }
               className="w-12 h-9 text-center text-sm font-mono bg-transparent border-x border-stone-300 focus:outline-none focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800"
             />
             <button
               type="button"
-              onClick={() => onChange(item.id, { qty: Math.round(item.qty + 1) })}
+              onClick={() => onChange(item.id, { qty: parseFloat((item.qty + 1).toFixed(2)) })}
               aria-label="Tăng số lượng"
               className="inline-flex items-center justify-center w-9 h-9 hover:bg-stone-100 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-inset"
             >
@@ -318,7 +318,7 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
             <button
               type="button"
               onClick={() =>
-                onChange(item.id, { qty: Math.max(1, Math.round(item.qty - 1)) })
+                onChange(item.id, { qty: Math.max(0.1, parseFloat((item.qty - 1).toFixed(2))) })
               }
               aria-label="Giảm số lượng"
               className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] hover:bg-stone-100 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-inset"
@@ -328,21 +328,21 @@ function CartItem({ item, product, productOptions, optionsMap, onChange, onRemov
             <input
               id={qtyId}
               type="number"
-              inputMode="numeric"
+              inputMode="decimal"
               value={item.qty}
-              min="1"
+              min="0.1"
               max="9999"
-              step="1"
+              step="0.1"
               onChange={(e) =>
                 onChange(item.id, {
-                  qty: Math.max(1, parseInt(e.target.value, 10) || 1),
+                  qty: Math.max(0.1, parseFloat(e.target.value) || 0.1),
                 })
               }
               className="w-16 text-center text-sm font-mono bg-transparent border-x border-stone-300 py-2 min-h-[44px] focus:outline-none focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800"
             />
             <button
               type="button"
-              onClick={() => onChange(item.id, { qty: Math.round(item.qty + 1) })}
+              onClick={() => onChange(item.id, { qty: parseFloat((item.qty + 1).toFixed(2)) })}
               aria-label="Tăng số lượng"
               className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] hover:bg-stone-100 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-inset"
             >
