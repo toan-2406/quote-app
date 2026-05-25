@@ -117,7 +117,11 @@ function saveQuote(quote) {
   const sheet = ss.getSheetByName('quotes');
   const now = new Date();
   const quoteId = 'BG-' + Utilities.formatDate(now, 'GMT+7', 'yyyyMMdd-HHmmss');
-  
+
+  // NOTE: quotes sheet columns (1-indexed):
+  // 1=quote_id, 2=customer_name, 3=customer_phone, 4=items(JSON),
+  // 5=total, 6=created_at, 7=status, 8=note
+  // Add column header "note" to row 1 column H if it does not exist yet.
   sheet.appendRow([
     quoteId,
     quote.customer_name || '',
@@ -125,11 +129,12 @@ function saveQuote(quote) {
     JSON.stringify(quote.items || []),
     quote.total || 0,
     Utilities.formatDate(now, 'GMT+7', 'yyyy-MM-dd HH:mm:ss'),
-    quote.status || 'draft'
+    quote.status || 'draft',
+    quote.note || ''
   ]);
-  
-  return jsonResponse({ 
-    ok: true, 
+
+  return jsonResponse({
+    ok: true,
     quote_id: quoteId,
     saved_at: now.toISOString()
   });

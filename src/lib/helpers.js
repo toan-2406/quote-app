@@ -12,6 +12,26 @@ export const computeUnitPrice = (product, quoteType) => {
   return product.price_install + product.price_manufacture;
 };
 
+// Returns the unit price actually applied to a cart item.
+// Honors `item.unitPriceOverride` (>= 0) when set; otherwise falls back to the
+// product catalog price for the chosen quote type.
+export const computeEffectiveUnitPrice = (item, product) => {
+  if (item && item.unitPriceOverride != null && !Number.isNaN(item.unitPriceOverride)) {
+    return Number(item.unitPriceOverride);
+  }
+  return computeUnitPrice(product, item ? item.quoteType : "both");
+};
+
+// Returns the extra price applied for one selected option on a cart item.
+// Honors `item.optionPriceOverrides[opt.option_id]` when set; otherwise uses
+// the option's catalog `extra_price` (0 when the option is free).
+export const computeEffectiveOptionPrice = (item, opt) => {
+  if (!opt) return 0;
+  const override = item?.optionPriceOverrides?.[opt.option_id];
+  if (override != null && !Number.isNaN(override)) return Number(override);
+  return opt.is_free ? 0 : opt.extra_price;
+};
+
 export const normalizeProducts = (raw) =>
   raw.map((p) => ({
     ...p,
@@ -73,8 +93,8 @@ export const buildZaloQuoteMessage = ({
   customer,
   lineItems,
   grandTotal,
+  note = "",
   brandName = "Nội Thất Khoán",
-  validityDays = 30,
 }) => {
   const date = today.toLocaleDateString("vi-VN");
   const lines = [];
@@ -105,7 +125,9 @@ export const buildZaloQuoteMessage = ({
     );
     if (li.selectedOpts && li.selectedOpts.length > 0) {
       li.selectedOpts.forEach((o) => {
-        const extra = !o.is_free ? ` (+${formatVND(o.extra_price)}đ)` : " (miễn phí)";
+        // o.effectivePrice is provided by callers that account for per-item overrides.
+        const price = o.effectivePrice != null ? o.effectivePrice : o.extra_price;
+        const extra = price > 0 ? ` (+${formatVND(price)}đ)` : " (miễn phí)";
         lines.push(`   + ${o.option_name}${extra}`);
       });
     }
@@ -115,10 +137,14 @@ export const buildZaloQuoteMessage = ({
   lines.push(DIVIDER);
   lines.push(`💰 TỔNG CỘNG: ${formatVND(grandTotal)}đ`);
   lines.push(DIVIDER);
-  lines.push("");
-  lines.push("📌 Lưu ý:");
-  lines.push(`• Báo giá có giá trị trong ${validityDays} ngày`);
-  lines.push("• Vật tư có thể thay đổi theo thực tế công trình");
+
+  const trimmedNote = (note || "").trim();
+  if (trimmedNote) {
+    lines.push("");
+    lines.push("📝 Ghi chú:");
+    lines.push(trimmedNote);
+  }
+
   lines.push("");
   lines.push(`— ${brandName} —`);
 

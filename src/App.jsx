@@ -33,6 +33,8 @@ import {
   CUSTOMER_STORAGE_KEY,
   DEFAULT_SCRIPT_URL,
   MOBILE_BREAKPOINT_QUERY,
+  QUOTE_NOTE_MAX_LENGTH,
+  QUOTE_NOTE_STORAGE_KEY,
   QUOTE_TYPES,
   QUOTE_TYPE_STORAGE_KEY,
   STORAGE_KEY,
@@ -41,7 +43,8 @@ import {
   buildOptionsBySku,
   buildOptionsMap,
   buildProductsMap,
-  computeUnitPrice,
+  computeEffectiveOptionPrice,
+  computeEffectiveUnitPrice,
   formatVND,
   normalizeOptions,
   normalizeProducts,
@@ -71,6 +74,7 @@ export default function QuoteApp() {
   const [savedQuoteInfo, setSavedQuoteInfo] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const [customerExpandedMobile, setCustomerExpandedMobile] = useState(false);
+  const [quoteNote, setQuoteNote] = useState("");
 
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
@@ -98,15 +102,16 @@ export default function QuoteApp() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
 
-  // Hydrate cart, customer, defaultQuoteType from localStorage on mount.
+  // Hydrate cart, customer, defaultQuoteType, quoteNote from localStorage on mount.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [cartStored, customerStored, typeStored] = await Promise.all([
+        const [cartStored, customerStored, typeStored, noteStored] = await Promise.all([
           storage.get(CART_STORAGE_KEY),
           storage.get(CUSTOMER_STORAGE_KEY),
           storage.get(QUOTE_TYPE_STORAGE_KEY),
+          storage.get(QUOTE_NOTE_STORAGE_KEY),
         ]);
         if (cancelled) return;
         if (cartStored?.value) {
@@ -126,6 +131,9 @@ export default function QuoteApp() {
         if (typeStored?.value) {
           const allowed = QUOTE_TYPES.map((q) => q.value);
           if (allowed.includes(typeStored.value)) setDefaultQuoteType(typeStored.value);
+        }
+        if (noteStored?.value && typeof noteStored.value === "string") {
+          setQuoteNote(noteStored.value.slice(0, QUOTE_NOTE_MAX_LENGTH));
         }
       } catch {
         // Storage unavailable or corrupted — fall back to defaults.
@@ -154,6 +162,12 @@ export default function QuoteApp() {
     if (!hydrated) return;
     storage.set(QUOTE_TYPE_STORAGE_KEY, defaultQuoteType);
   }, [defaultQuoteType, hydrated]);
+
+  // Persist quote note on change (post-hydration).
+  useEffect(() => {
+    if (!hydrated) return;
+    storage.set(QUOTE_NOTE_STORAGE_KEY, quoteNote);
+  }, [quoteNote, hydrated]);
 
   const fetchSheetData = useCallback(async (url) => {
     if (!url) {
@@ -245,6 +259,8 @@ export default function QuoteApp() {
           qty: 1,
           selectedOptions: [],
           quoteType: initialType,
+          unitPriceOverride: null,
+          optionPriceOverrides: {},
         },
       ]);
       setSavedQuoteInfo(null);
@@ -280,6 +296,7 @@ export default function QuoteApp() {
 
   const clearCart = useCallback(() => {
     setCart([]);
+    setQuoteNote("");
     setSavedQuoteInfo(null);
   }, []);
 
@@ -287,11 +304,11 @@ export default function QuoteApp() {
     return cart.reduce((sum, item) => {
       const p = productsMap.get(item.sku);
       if (!p) return sum;
-      const base = computeUnitPrice(p, item.quoteType) * item.qty;
+      const base = computeEffectiveUnitPrice(item, p) * item.qty;
       const opts =
         item.selectedOptions.reduce((s, oid) => {
           const o = optionsMap.get(oid);
-          return s + (o && !o.is_free ? o.extra_price : 0);
+          return s + computeEffectiveOptionPrice(item, o);
         }, 0) * item.qty;
       return sum + base + opts;
     }, 0);
@@ -311,6 +328,7 @@ export default function QuoteApp() {
             customer_address: customer.address,
             items: cart,
             total: cartTotal,
+            note: quoteNote,
             status: "draft",
           },
         }),
@@ -324,7 +342,7 @@ export default function QuoteApp() {
     } catch (e) {
       setSaveError(e.message);
     }
-  }, [scriptUrl, customer, cart, cartTotal]);
+  }, [scriptUrl, customer, cart, cartTotal, quoteNote]);
 
   const goToCart = useCallback(() => {
     setMobileTab("cart");
@@ -811,6 +829,37 @@ export default function QuoteApp() {
 
             {cart.length > 0 && (
               <>
+                {/* Quote note — visible on both mobile (above sticky bar) and desktop */}
+                <div className="px-4 lg:px-5 py-3 border-t border-stone-200/80 bg-white/40">
+                  <label
+                    htmlFor="quote-note-input"
+                    className="flex items-center justify-between text-[10px] lg:text-[11px] tracking-widest uppercase text-stone-700 font-medium mb-1.5"
+                  >
+                    <span>📝 Ghi chú hóa đơn</span>
+                    <span
+                      aria-live="polite"
+                      className={`font-mono text-[10px] ${
+                        quoteNote.length >= QUOTE_NOTE_MAX_LENGTH
+                          ? "text-amber-800"
+                          : "text-stone-500"
+                      }`}
+                    >
+                      {quoteNote.length} / {QUOTE_NOTE_MAX_LENGTH}
+                    </span>
+                  </label>
+                  <textarea
+                    id="quote-note-input"
+                    value={quoteNote}
+                    onChange={(e) =>
+                      setQuoteNote(e.target.value.slice(0, QUOTE_NOTE_MAX_LENGTH))
+                    }
+                    maxLength={QUOTE_NOTE_MAX_LENGTH}
+                    rows={3}
+                    placeholder="VD: Giao trước Tết. Bao gồm vận chuyển HCM → ĐN."
+                    className="w-full px-3 py-2 text-xs font-sans bg-white border border-stone-300 resize-y focus:outline-none focus-visible:bg-amber-50/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-800"
+                  />
+                </div>
+
                 <div className="hidden lg:block px-5 py-4 border-t border-stone-300 bg-white/60">
                   <div className="flex justify-between items-baseline">
                     <span className="text-[11px] tracking-widest uppercase text-stone-700 font-medium">
@@ -943,6 +992,7 @@ export default function QuoteApp() {
         <QuoteSummaryModal
           items={cart}
           customer={customer}
+          note={quoteNote}
           productsMap={productsMap}
           optionsMap={optionsMap}
           onClose={() => setShowSummary(false)}
