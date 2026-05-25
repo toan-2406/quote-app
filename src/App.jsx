@@ -253,21 +253,37 @@ export default function QuoteApp() {
   const addToCart = useCallback(
     (product) => {
       const initialType = product.price_manufacture > 0 ? defaultQuoteType : "install";
-      setCart((prev) => [
-        ...prev,
-        {
-          id: `cart-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          sku: product.sku,
-          qty: 1,
-          selectedOptions: [],
-          quoteType: initialType,
-          unitPriceOverride: null,
-          optionPriceOverrides: {},
-        },
-      ]);
+      let merged = false;
+      setCart((prev) => {
+        // Merge by SKU: bumping qty on the existing line preserves the user's
+        // overrides (quoteType, unitPriceOverride, optionPriceOverrides,
+        // selectedOptions) instead of creating a duplicate row.
+        const idx = prev.findIndex((it) => it.sku === product.sku);
+        if (idx >= 0) {
+          merged = true;
+          const next = [...prev];
+          next[idx] = {
+            ...next[idx],
+            qty: parseFloat((next[idx].qty + 1).toFixed(2)),
+          };
+          return next;
+        }
+        return [
+          ...prev,
+          {
+            id: `cart-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            sku: product.sku,
+            qty: 1,
+            selectedOptions: [],
+            quoteType: initialType,
+            unitPriceOverride: null,
+            optionPriceOverrides: {},
+          },
+        ];
+      });
       setSavedQuoteInfo(null);
       setCartBumpKey((k) => k + 1);
-      showToast(`Đã thêm: ${product.name}`);
+      showToast(merged ? `Đã +1: ${product.name}` : `Đã thêm: ${product.name}`);
     },
     [defaultQuoteType, showToast],
   );
