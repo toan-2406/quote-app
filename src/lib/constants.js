@@ -1,4 +1,7 @@
 export const STORAGE_KEY = "quote_script_url";
+export const CART_STORAGE_KEY = "quote_cart_v1";
+export const CUSTOMER_STORAGE_KEY = "quote_customer_v1";
+export const QUOTE_TYPE_STORAGE_KEY = "quote_default_type_v1";
 
 export const DEFAULT_SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbx1tD8as7dw7nyGbJv7MTJMvz4dzdqAplL_c8vSzYQ1zqWX0CYrUK4W9cd_s0dVuAw3Rw/exec";
