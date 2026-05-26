@@ -18,7 +18,6 @@ import {
   X,
 } from "lucide-react";
 
-import ConnectionBadge from "./components/ConnectionBadge";
 import ProductCard from "./components/ProductCard";
 import ProductDetailModal from "./components/ProductDetailModal";
 import CartItem from "./components/CartItem";
@@ -241,6 +240,17 @@ export default function QuoteApp() {
     [products],
   );
 
+  // Used by the mobile dropdown to show "Phòng ngủ (5)" so users can pick a
+  // populated category without scanning the grid first.
+  const categoryCounts = useMemo(() => {
+    const counts = new Map();
+    counts.set("Tất cả", products.length);
+    for (const p of products) {
+      counts.set(p.category, (counts.get(p.category) || 0) + 1);
+    }
+    return counts;
+  }, [products]);
+
   const filteredProducts = useMemo(() => {
     const q = search.trim().toLowerCase();
     return products.filter((p) => {
@@ -371,7 +381,7 @@ export default function QuoteApp() {
   // Persist product + options edits back to the Sheet, then refresh local
   // products/options from source so subsequent renders pick up the new values.
   const handleUpdateProductAndOptions = useCallback(
-    async ({ product, options }) => {
+    async ({ product, options, deletedOptionIds = [] }) => {
       if (!scriptUrl) throw new Error("Chưa kết nối với Google Sheet.");
       const res = await fetch(scriptUrl, {
         method: "POST",
@@ -379,11 +389,32 @@ export default function QuoteApp() {
           action: "updateProductAndOptions",
           product,
           options,
+          deleted_option_ids: deletedOptionIds,
         }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Cập nhật thất bại.");
-      // Refetch in background so the catalog reflects new values.
+      fetchSheetData(scriptUrl);
+      return data;
+    },
+    [scriptUrl, fetchSheetData],
+  );
+
+  // Delete a product (cascades to its options on the backend), then refetch.
+  const handleDeleteProduct = useCallback(
+    async (sku) => {
+      if (!scriptUrl) throw new Error("Chưa kết nối với Google Sheet.");
+      if (!sku) throw new Error("Thiếu mã sản phẩm để xóa.");
+      const res = await fetch(scriptUrl, {
+        method: "POST",
+        body: JSON.stringify({ action: "deleteProduct", sku }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Xóa không thành công.");
+      // Drop any cart rows pointing at the deleted SKU so we don't render
+      // orphaned items in the bill.
+      setCart((prev) => prev.filter((it) => it.sku !== sku));
+      setDetailProduct(null);
       fetchSheetData(scriptUrl);
       return data;
     },
@@ -419,9 +450,6 @@ export default function QuoteApp() {
             </div>
           </div>
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <span className="hidden md:inline text-xs text-stone-700">
-              {products.length} hạng mục
-            </span>
             {connectionStatus === "connected" && (
               <button
                 type="button"
@@ -442,9 +470,6 @@ export default function QuoteApp() {
             >
               <Archive aria-hidden="true" className="w-4 h-4" />
             </button>
-            <div aria-live="polite" className="hidden sm:block">
-              <ConnectionBadge status={connectionStatus} onClick={() => setShowSettings(true)} />
-            </div>
             <button
               type="button"
               onClick={() => setShowSettings(true)}
@@ -455,16 +480,33 @@ export default function QuoteApp() {
                   ? "Mở cài đặt — lỗi kết nối"
                   : "Mở cài đặt kết nối Google Sheet"
               }
-              className="inline-flex items-center justify-center min-w-[40px] min-h-[40px] text-stone-600 hover:text-stone-900 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2"
+              title={
+                connectionStatus === "connected"
+                  ? `Đã kết nối · ${products.length} hạng mục`
+                  : "Cài đặt kết nối"
+              }
+              className={`relative inline-flex items-center justify-center min-w-[40px] min-h-[40px] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2 ${
+                connectionStatus === "error"
+                  ? "text-amber-800"
+                  : "text-stone-600 hover:text-stone-900"
+              }`}
             >
               <Settings aria-hidden="true" className="w-4 h-4" />
+              {/* Status dot — surfaces the connection state without needing the
+                  full badge in the header. */}
+              <span
+                aria-hidden="true"
+                className={`absolute top-1.5 right-1.5 w-2 h-2 rounded-full ${
+                  connectionStatus === "connected"
+                    ? "bg-amber-700"
+                    : connectionStatus === "connecting"
+                    ? "bg-stone-400 animate-pulse"
+                    : connectionStatus === "error"
+                    ? "bg-amber-800"
+                    : "bg-stone-300"
+                }`}
+              />
             </button>
-          </div>
-        </div>
-        <div className="sm:hidden border-t border-stone-200 px-4 py-2 flex items-center justify-between bg-white">
-          <span className="text-xs text-stone-700">{products.length} hạng mục</span>
-          <div aria-live="polite">
-            <ConnectionBadge status={connectionStatus} onClick={() => setShowSettings(true)} />
           </div>
         </div>
       </header>
@@ -529,7 +571,9 @@ export default function QuoteApp() {
           aria-labelledby="catalog-tab"
           className={mobileTab !== "catalog" ? "hidden lg:block" : ""}
         >
-          <div className="mb-8 grid grid-cols-12 gap-4 items-end">
+          {/* Editorial hero — hidden on mobile because the header already shows
+              product count + connection badge. Keeps the brand-y feel on tablet+. */}
+          <div className="hidden sm:grid sm:mb-8 grid-cols-12 gap-4 items-end">
             <div className="col-span-12 lg:col-span-8">
               <p className="text-[11px] tracking-[0.25em] uppercase text-amber-900 mb-2 font-medium">
                 No. {String(products.length).padStart(3, "0")} — Bảng báo giá thi công
@@ -610,7 +654,44 @@ export default function QuoteApp() {
             )}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
+          {/* Mobile (<sm): single-row dropdown + add button — saves vertical
+              real-estate vs. a wrapping chip list. */}
+          <div className="sm:hidden flex items-stretch gap-2 mb-6">
+            <label htmlFor="cat-select-mobile" className="sr-only">
+              Lọc theo danh mục
+            </label>
+            <div className="relative flex-1 min-w-0">
+              <select
+                id="cat-select-mobile"
+                value={activeCategory}
+                onChange={(e) => setActiveCategory(e.target.value)}
+                className="w-full appearance-none pl-3 pr-9 py-2 min-h-[40px] text-xs tracking-wider uppercase bg-white border border-stone-400 text-stone-800 font-medium cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2 focus-visible:ring-offset-[#FAF7F2]"
+              >
+                {CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat} ({categoryCounts.get(cat) || 0})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-500"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCreateProduct(true)}
+              disabled={connectionStatus !== "connected"}
+              aria-label="Thêm sản phẩm mới vào danh mục"
+              title={connectionStatus !== "connected" ? "Cần kết nối Google Sheet" : "Thêm sản phẩm mới"}
+              className="shrink-0 inline-flex items-center gap-1 px-3 py-2 min-h-[40px] bg-amber-800 text-amber-50 text-xs tracking-wider uppercase font-medium hover:bg-amber-900 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2 focus-visible:ring-offset-[#FAF7F2]"
+            >
+              <Plus aria-hidden="true" className="w-3.5 h-3.5" /> Mới
+            </button>
+          </div>
+
+          {/* Desktop (sm+): chip filter row */}
+          <div className="hidden sm:flex flex-wrap items-center justify-between gap-2 mb-6">
             <nav aria-label="Danh mục sản phẩm" className="flex flex-wrap gap-2">
               {CATEGORIES.map((cat) => (
                 <button
@@ -1056,6 +1137,7 @@ export default function QuoteApp() {
             onClose={() => setDetailProduct(null)}
             onAddToCart={addToCart}
             onSave={handleUpdateProductAndOptions}
+            onDelete={handleDeleteProduct}
           />
         );
       })()}
@@ -1089,6 +1171,8 @@ export default function QuoteApp() {
       {showSettings && (
         <SettingsModal
           currentUrl={scriptUrl}
+          productCount={products.length}
+          connectionStatus={connectionStatus}
           onSave={handleSaveSettings}
           onDisconnect={handleDisconnect}
           onClose={() => setShowSettings(false)}

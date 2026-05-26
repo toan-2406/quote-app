@@ -31,7 +31,8 @@ const blankOption = (sku) => ({
  *   categories?: Array<string>,
  *   onClose: () => void,
  *   onAddToCart?: (product: object) => void,
- *   onSave: (payload: { product: object, options: Array<object> }) => Promise<object>,
+ *   onSave: (payload: { product: object, options: Array<object>, deletedOptionIds: Array<string> }) => Promise<object>,
+ *   onDelete?: (sku: string) => Promise<object>,
  * }} props
  */
 export default function ProductDetailModal({
@@ -43,13 +44,18 @@ export default function ProductDetailModal({
   onClose,
   onAddToCart,
   onSave,
+  onDelete,
 }) {
   const titleId = useId();
   const categoriesId = useId();
   // In create mode there is nothing to "view" — start in edit immediately.
   const [mode, setMode] = useState(isCreate ? "edit" : "view");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState(null);
+  // Existing OPT-NNN ids the user removed from the draftOptions list;
+  // committed to the backend on Save so the rows are removed from the sheet.
+  const [deletedOptionIds, setDeletedOptionIds] = useState([]);
 
   // Editable draft state — populated on mount (create) or on entering edit mode
   const [draftProduct, setDraftProduct] = useState(() =>
@@ -94,6 +100,7 @@ export default function ProductDetailModal({
         is_free: !!o.is_free,
       })),
     );
+    setDeletedOptionIds([]);
     setError(null);
     setMode("edit");
   };
@@ -104,6 +111,7 @@ export default function ProductDetailModal({
       onClose();
       return;
     }
+    setDeletedOptionIds([]);
     setMode("view");
     setError(null);
   };
@@ -113,8 +121,35 @@ export default function ProductDetailModal({
   };
 
   const removeOption = (idx) => {
-    setDraftOptions((prev) => prev.filter((_, i) => i !== idx));
+    setDraftOptions((prev) => {
+      const target = prev[idx];
+      if (target && !String(target.option_id).startsWith(NEW_OPTION_PREFIX)) {
+        // Existing OPT-NNN: queue for deletion on next Save.
+        setDeletedOptionIds((ids) =>
+          ids.includes(target.option_id) ? ids : [...ids, target.option_id],
+        );
+      }
+      return prev.filter((_, i) => i !== idx);
+    });
   };
+
+  const handleDelete = useCallback(async () => {
+    if (!product?.sku || !onDelete) return;
+    const ok = window.confirm(
+      `Xóa sản phẩm "${product.name}" (${product.sku}) và toàn bộ tùy chọn của nó?\n\nThao tác này không thể hoàn tác.`,
+    );
+    if (!ok) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await onDelete(product.sku);
+      onClose();
+    } catch (e) {
+      setError(e?.message || "Xóa không thành công.");
+    } finally {
+      setDeleting(false);
+    }
+  }, [product, onDelete, onClose]);
 
   const handleSave = useCallback(async () => {
     if (!draftProduct || !draftProduct.name.trim()) {
@@ -145,10 +180,12 @@ export default function ProductDetailModal({
           extra_price: parseFloat(o.extra_price) || 0,
           is_free: o.is_free,
         })),
+        deletedOptionIds,
       });
       if (isCreate) {
         onClose();
       } else {
+        setDeletedOptionIds([]);
         setMode("view");
       }
     } catch (e) {
@@ -156,7 +193,7 @@ export default function ProductDetailModal({
     } finally {
       setSaving(false);
     }
-  }, [draftProduct, draftOptions, onSave, isCreate, onClose]);
+  }, [draftProduct, draftOptions, deletedOptionIds, onSave, isCreate, onClose]);
 
   // ----- Top header strings -----
   const headerTitle = isCreate
@@ -205,10 +242,26 @@ export default function ProductDetailModal({
           )}
           {mode === "edit" && (
             <>
+              {!isCreate && onDelete && (
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={saving || deleting}
+                  aria-label={`Xóa sản phẩm ${product?.sku || ""}`}
+                  title="Xóa sản phẩm"
+                  className="inline-flex items-center justify-center w-10 h-10 border border-red-800/40 text-red-800 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2"
+                >
+                  {deleting ? (
+                    <Loader2 aria-hidden="true" className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 aria-hidden="true" className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={cancelEdit}
-                disabled={saving}
+                disabled={saving || deleting}
                 className="px-3 py-2 min-h-[40px] border border-stone-300 text-stone-700 text-[11px] tracking-wider uppercase hover:bg-stone-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2"
               >
                 Hủy
@@ -216,7 +269,7 @@ export default function ProductDetailModal({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || deleting}
                 className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] bg-stone-900 text-amber-50 text-[11px] tracking-wider uppercase hover:bg-amber-900 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2"
               >
                 {saving && <Loader2 aria-hidden="true" className="w-3.5 h-3.5 animate-spin" />}
@@ -515,16 +568,15 @@ function ProductEditForm({
                     <p className="text-[10px] font-mono text-stone-500 uppercase tracking-wider">
                       {isNew ? "Tùy chọn mới" : o.option_id}
                     </p>
-                    {isNew && (
-                      <button
-                        type="button"
-                        onClick={() => onRemoveOption(idx)}
-                        aria-label="Xóa tùy chọn mới này"
-                        className="inline-flex items-center justify-center w-7 h-7 text-stone-500 hover:text-red-800 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-1"
-                      >
-                        <Trash2 aria-hidden="true" className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => onRemoveOption(idx)}
+                      aria-label={isNew ? "Xóa tùy chọn mới này" : `Xóa tùy chọn ${o.option_id}`}
+                      title={isNew ? "Xóa tùy chọn mới" : "Sẽ xóa khi lưu"}
+                      className="inline-flex items-center justify-center w-7 h-7 text-stone-500 hover:text-red-800 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-1"
+                    >
+                      <Trash2 aria-hidden="true" className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-[1fr,140px] gap-2">
                     <input

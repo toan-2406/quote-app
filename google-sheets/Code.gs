@@ -78,7 +78,15 @@ function doPost(e) {
     }
 
     if (action === 'updateProductAndOptions') {
-      return updateProductAndOptions(body.product, body.options || []);
+      return updateProductAndOptions(
+        body.product,
+        body.options || [],
+        body.deleted_option_ids || []
+      );
+    }
+
+    if (action === 'deleteProduct') {
+      return deleteProduct(body.sku);
     }
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + action });
@@ -156,11 +164,12 @@ function saveQuote(quote) {
 //   - product.sku matches an existing row → update only the fields supplied.
 //   - For each option: missing/empty/"new-..." option_id → append new option
 //     row, auto-assigns OPT-NNN. Existing option_id → update in place.
-function updateProductAndOptions(product, options) {
+function updateProductAndOptions(product, options, deletedOptionIds) {
   if (!product) {
     return jsonResponse({ ok: false, error: 'Missing product' });
   }
   options = options || [];
+  deletedOptionIds = deletedOptionIds || [];
 
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const productsSheet = ss.getSheetByName('products');
@@ -245,13 +254,80 @@ function updateProductAndOptions(product, options) {
     });
   }
 
+  // ----- Options: delete (process AFTER updates/creates so any new options
+  // appended above don't shift indexes mid-loop). Iterate bottom-up so row
+  // deletions don't affect subsequent indices. -----
+  const optionsDeleted = [];
+  if (optionsSheet && deletedOptionIds.length > 0) {
+    const data = optionsSheet.getDataRange().getValues();
+    const rowsToDelete = [];
+    for (let i = 1; i < data.length; i++) {
+      if (deletedOptionIds.indexOf(data[i][0]) >= 0) {
+        rowsToDelete.push({ row: i + 1, id: data[i][0] });
+      }
+    }
+    rowsToDelete.sort(function (a, b) { return b.row - a.row; });
+    rowsToDelete.forEach(function (entry) {
+      optionsSheet.deleteRow(entry.row);
+      optionsDeleted.push(entry.id);
+    });
+  }
+
   return jsonResponse({
     ok: true,
     sku: resolvedSku,
     product_created: productCreated,
     product_updated: productUpdated,
     options_created: optionsCreated,
-    options_updated: optionsUpdated
+    options_updated: optionsUpdated,
+    options_deleted: optionsDeleted
+  });
+}
+
+// Delete a product row and cascade-delete its options.
+function deleteProduct(sku) {
+  if (!sku) {
+    return jsonResponse({ ok: false, error: 'Missing sku' });
+  }
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const productsSheet = ss.getSheetByName('products');
+  const optionsSheet = ss.getSheetByName('product_options');
+
+  let productDeleted = false;
+  const optionsDeleted = [];
+
+  if (productsSheet) {
+    const data = productsSheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === sku) {
+        productsSheet.deleteRow(i + 1);
+        productDeleted = true;
+        break;
+      }
+    }
+  }
+
+  if (optionsSheet) {
+    const data = optionsSheet.getDataRange().getValues();
+    const toDelete = [];
+    for (let i = 1; i < data.length; i++) {
+      // Column 2 (index 1) is the sku reference on option_options.
+      if (data[i][1] === sku) {
+        toDelete.push({ row: i + 1, id: data[i][0] });
+      }
+    }
+    toDelete.sort(function (a, b) { return b.row - a.row; });
+    toDelete.forEach(function (entry) {
+      optionsSheet.deleteRow(entry.row);
+      optionsDeleted.push(entry.id);
+    });
+  }
+
+  return jsonResponse({
+    ok: true,
+    sku: sku,
+    product_deleted: productDeleted,
+    options_deleted: optionsDeleted
   });
 }
 

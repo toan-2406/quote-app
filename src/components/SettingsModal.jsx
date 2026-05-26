@@ -1,8 +1,16 @@
 import { useId, useState } from "react";
 import { AlertCircle, CheckCircle2, Link2, Loader2, X } from "lucide-react";
 import Modal from "./Modal";
+import ConnectionBadge from "./ConnectionBadge";
 
-export default function SettingsModal({ currentUrl, onSave, onDisconnect, onClose }) {
+export default function SettingsModal({
+  currentUrl,
+  onSave,
+  onDisconnect,
+  onClose,
+  productCount = 0,
+  connectionStatus = "demo",
+}) {
   const titleId = useId();
   const urlId = useId();
   const statusId = useId();
@@ -72,6 +80,21 @@ export default function SettingsModal({ currentUrl, onSave, onDisconnect, onClos
       </div>
 
       <div className="p-6 space-y-4 bg-white">
+        {/* Status panel — surfaced here so the catalog header can stay minimal */}
+        <div className="flex items-center justify-between gap-3 p-3 bg-[#FAF7F2] border border-stone-300">
+          <div>
+            <p className="text-[10px] tracking-widest uppercase text-stone-600 font-medium">
+              Trạng thái
+            </p>
+            <p className="text-sm text-stone-900 mt-0.5">
+              <span className="font-medium">{productCount}</span> hạng mục
+            </p>
+          </div>
+          <div aria-live="polite">
+            <ConnectionBadge status={connectionStatus} />
+          </div>
+        </div>
+
         <div>
           <label
             htmlFor={urlId}
