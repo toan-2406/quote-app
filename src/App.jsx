@@ -71,6 +71,7 @@ export default function QuoteApp() {
   const [showSettings, setShowSettings] = useState(false);
   const [showSavedQuotes, setShowSavedQuotes] = useState(false);
   const [detailProduct, setDetailProduct] = useState(null);
+  const [showCreateProduct, setShowCreateProduct] = useState(false);
   const [mobileTab, setMobileTab] = useState("catalog");
   const [defaultQuoteType, setDefaultQuoteType] = useState("both");
   const [savedQuoteInfo, setSavedQuoteInfo] = useState(null);
@@ -609,23 +610,35 @@ export default function QuoteApp() {
             )}
           </div>
 
-          <nav aria-label="Danh mục sản phẩm" className="flex flex-wrap gap-2 mb-6">
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat}
-                type="button"
-                aria-pressed={activeCategory === cat}
-                onClick={() => setActiveCategory(cat)}
-                className={`px-3.5 py-2 min-h-[40px] text-xs tracking-wider uppercase border transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2 focus-visible:ring-offset-[#FAF7F2] ${
-                  activeCategory === cat
-                    ? "bg-stone-900 text-amber-50 border-stone-900 font-medium"
-                    : "bg-transparent text-stone-700 border-stone-400 hover:border-stone-700"
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </nav>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
+            <nav aria-label="Danh mục sản phẩm" className="flex flex-wrap gap-2">
+              {CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  aria-pressed={activeCategory === cat}
+                  onClick={() => setActiveCategory(cat)}
+                  className={`px-3.5 py-2 min-h-[40px] text-xs tracking-wider uppercase border transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2 focus-visible:ring-offset-[#FAF7F2] ${
+                    activeCategory === cat
+                      ? "bg-stone-900 text-amber-50 border-stone-900 font-medium"
+                      : "bg-transparent text-stone-700 border-stone-400 hover:border-stone-700"
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </nav>
+            <button
+              type="button"
+              onClick={() => setShowCreateProduct(true)}
+              disabled={connectionStatus !== "connected"}
+              aria-label="Thêm sản phẩm mới vào danh mục"
+              title={connectionStatus !== "connected" ? "Cần kết nối Google Sheet" : "Thêm sản phẩm mới"}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] bg-amber-800 text-amber-50 text-xs tracking-wider uppercase font-medium hover:bg-amber-900 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2 focus-visible:ring-offset-[#FAF7F2]"
+            >
+              <Plus aria-hidden="true" className="w-3.5 h-3.5" /> Sản phẩm mới
+            </button>
+          </div>
 
           {connectionStatus === "connecting" ? (
             <div className="text-center py-16">
@@ -1039,12 +1052,25 @@ export default function QuoteApp() {
             product={liveProduct}
             productOptions={optionsBySku.get(liveProduct.sku) || []}
             canEdit={connectionStatus === "connected"}
+            categories={CATEGORIES.filter((c) => c !== "Tất cả")}
             onClose={() => setDetailProduct(null)}
             onAddToCart={addToCart}
             onSave={handleUpdateProductAndOptions}
           />
         );
       })()}
+
+      {showCreateProduct && (
+        <ProductDetailModal
+          product={null}
+          productOptions={[]}
+          canEdit={connectionStatus === "connected"}
+          isCreate
+          categories={CATEGORIES.filter((c) => c !== "Tất cả")}
+          onClose={() => setShowCreateProduct(false)}
+          onSave={handleUpdateProductAndOptions}
+        />
+      )}
 
       {showSummary && (
         <QuoteSummaryModal
